@@ -2,15 +2,15 @@
 Review scraping module for Amazon products
 """
 import time
-import logging
 import random
 import re
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from config import MIN_DELAY, MAX_DELAY, PAGE_LOAD_TIMEOUT
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ReviewScraper:
@@ -92,22 +92,27 @@ class ReviewScraper:
             }
         """
         reviews_url = self._get_reviews_url(product_url, star_rating)
-        logger.info(f"Scraping reviews from: {reviews_url}")
+        logger.browser_action("Starting review scraping", f"URL: {reviews_url}")
+        if star_rating:
+            logger.info(f"⭐ Filtering for {star_rating}-star reviews only")
         
         all_reviews = []
         page_num = 1
         
         try:
             # Navigate to reviews page
+            logger.browser_action("Navigating to reviews page", reviews_url)
             self.page.goto(reviews_url, wait_until='domcontentloaded', timeout=PAGE_LOAD_TIMEOUT)
             
             # Quick wait for initial page load
+            logger.info("⏳ Waiting for page to load...")
             try:
                 self.page.wait_for_load_state('load', timeout=10000)
             except:
                 pass
             
             # Check for "no reviews" case early
+            logger.info("🔍 Checking for reviews availability...")
             page_content = self.page.content().lower()
             no_reviews_indicators = [
                 'no customer reviews',
@@ -117,7 +122,7 @@ class ReviewScraper:
             ]
             
             if any(indicator in page_content for indicator in no_reviews_indicators):
-                logger.info("No reviews found for this product")
+                logger.warning("⚠️ No reviews found for this product")
                 return {
                     'product_url': product_url,
                     'filter_rating': star_rating,
@@ -125,45 +130,50 @@ class ReviewScraper:
                 }
             
             # Wait for reviews container - use most reliable selector
+            logger.info("🔍 Looking for review elements...")
             try:
                 self.page.wait_for_selector('[data-hook="review"]', timeout=10000, state='visible')
+                logger.success("✅ Review elements found")
             except PlaywrightTimeoutError:
                 # Check if there are truly no reviews
                 if 'no customer reviews' in page_content or 'be the first to review' in page_content:
-                    logger.info("No reviews found for this product")
+                    logger.warning("⚠️ No reviews found for this product")
                     return {
                         'product_url': product_url,
                         'filter_rating': star_rating,
                         'reviews': []
                     }
-                logger.warning("Timeout waiting for reviews - attempting extraction anyway")
+                logger.warning("⏰ Timeout waiting for reviews - attempting extraction anyway")
             
             # Extract reviews from pages
+            logger.info(f"📄 Starting review extraction for {max_pages} pages...")
             while page_num <= max_pages:
-                logger.info(f"Scraping reviews from page {page_num}/{max_pages}...")
+                logger.info(f"📖 Scraping reviews from page {page_num}/{max_pages}...")
                 
                 page_reviews = self._extract_reviews_from_page()
                 
                 if not page_reviews:
                     if page_num == 1:
-                        logger.info("No reviews found on first page - product may have no reviews")
+                        logger.warning("⚠️ No reviews found on first page - product may have no reviews")
                         break
                     else:
-                        logger.info("No more reviews found")
+                        logger.info("ℹ️ No more reviews found")
                         break
                 
                 all_reviews.extend(page_reviews)
-                logger.info(f"✓ Found {len(page_reviews)} reviews on page {page_num}")
+                logger.success(f"✅ Found {len(page_reviews)} reviews on page {page_num}")
                 
                 # Navigate to next page if available
                 if page_num < max_pages:
+                    logger.info("🔄 Checking for next page...")
                     if not self._navigate_to_next_page():
+                        logger.info("ℹ️ No more pages available")
                         break
                     self._random_delay()
                 
                 page_num += 1
             
-            logger.info(f"✓ Total reviews scraped: {len(all_reviews)}")
+            logger.success(f"🎉 Total reviews scraped: {len(all_reviews)}")
             
             return {
                 'product_url': product_url,
@@ -172,7 +182,11 @@ class ReviewScraper:
             }
             
         except Exception as e:
-            logger.error(f"Error scraping reviews: {e}", exc_info=True)
+            logger.error(f"💥 Error scraping reviews: {e}", exc_info=True)
+            logger.error_with_solution(
+                "Review scraping failed",
+                "Check if the product has reviews and try again"
+            )
             return {
                 'product_url': product_url,
                 'filter_rating': star_rating,
@@ -215,12 +229,66 @@ class ReviewScraper:
                 try:
                     review_data = {}
                     
-                    # Extract reviewer nickname (primary selector)
-                    nickname_elem = review_element.locator('[data-hook="review-author"]').first
-                    if nickname_elem.count() > 0:
-                        review_data['reviewer_nickname'] = nickname_elem.inner_text().strip()
-                    else:
-                        review_data['reviewer_nickname'] = 'Anonymous'
+                    # Extract reviewer nickname - try multiple selectors
+                    reviewer_nickname = 'Anonymous'
+                    nickname_selectors = [
+                        '[data-hook="review-author"]',
+                        '.a-profile-name',
+                        '.a-profile-display-name',
+                        '[class*="profile-name"]',
+                        '[class*="reviewer-name"]',
+                        '.a-text-bold',
+                        'span.a-profile-name',
+                        'div.a-profile-name',
+                        'a[href*="/profile/"]',
+                        'a[href*="/gp/profile/"]',
+                        '.a-link-normal[href*="/profile/"]',
+                        '[data-hook="review-author"] a',
+                        '[data-hook="review-author"] span',
+                        '.a-size-base.a-color-secondary',
+                        '.a-size-mini.a-color-secondary'
+                    ]
+                    
+                    for selector in nickname_selectors:
+                        try:
+                            nickname_elem = review_element.locator(selector).first
+                            if nickname_elem.count() > 0:
+                                text = nickname_elem.inner_text().strip()
+                                # Filter out rating text and other unwanted content
+                                if (text and 
+                                    text.lower() not in ['', 'anonymous', 'amazon customer', 'verified purchase'] and
+                                    not re.search(r'\d+\.?\d*\s*(?:out of|/)\s*5\s*stars?', text, re.IGNORECASE) and
+                                    not re.search(r'^\d+\.?\d*\s*stars?$', text, re.IGNORECASE) and
+                                    not re.search(r'^\d+\.?\d*$', text) and
+                                    len(text) < 100):  # Avoid very long text that might be content
+                                    reviewer_nickname = text
+                                    break
+                        except Exception:
+                            continue
+                    
+                    # If still no nickname found, try getting text from the entire review author section
+                    if reviewer_nickname == 'Anonymous':
+                        try:
+                            author_section = review_element.locator('[data-hook="review-author"], .a-profile-name, .a-profile-display-name').first
+                            if author_section.count() > 0:
+                                all_text = author_section.inner_text().strip()
+                                # Split by common separators and take the first meaningful part
+                                for separator in ['\n', '•', '|', 'on ']:
+                                    if separator in all_text:
+                                        potential_name = all_text.split(separator)[0].strip()
+                                        # Apply same filtering as above
+                                        if (potential_name and 
+                                            potential_name.lower() not in ['', 'anonymous', 'amazon customer', 'verified purchase'] and
+                                            not re.search(r'\d+\.?\d*\s*(?:out of|/)\s*5\s*stars?', potential_name, re.IGNORECASE) and
+                                            not re.search(r'^\d+\.?\d*\s*stars?$', potential_name, re.IGNORECASE) and
+                                            not re.search(r'^\d+\.?\d*$', potential_name) and
+                                            len(potential_name) < 100):
+                                            reviewer_nickname = potential_name
+                                            break
+                        except Exception:
+                            pass
+                    
+                    review_data['reviewer_nickname'] = reviewer_nickname
                     
                     # Extract rating - try multiple selectors and methods
                     rating = 0

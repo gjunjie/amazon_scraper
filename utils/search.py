@@ -2,7 +2,6 @@
 Product search module for Amazon
 """
 import time
-import logging
 import random
 import re
 from pathlib import Path
@@ -10,8 +9,9 @@ from urllib.parse import urlencode
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from config import AMAZON_BASE_URL, MIN_DELAY, MAX_DELAY, PAGE_LOAD_TIMEOUT
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ProductSearch:
@@ -51,7 +51,7 @@ class ProductSearch:
                 ...
             ]
         """
-        logger.info(f"Searching for '{keyword}'...")
+        logger.browser_action("Starting product search", f"Keyword: '{keyword}', Target: {top_n} products")
         
         # Build search URL from base URL
         params = {'k': keyword}
@@ -59,11 +59,12 @@ class ProductSearch:
         
         try:
             # Navigate to search page
-            logger.info(f"Navigating to search URL: {search_url}")
+            logger.browser_action("Navigating to search page", search_url)
             # Use 'domcontentloaded' instead of 'networkidle' - more reliable
             self.page.goto(search_url, wait_until='domcontentloaded', timeout=PAGE_LOAD_TIMEOUT)
             
             # Wait a bit for page to stabilize
+            logger.info("⏳ Waiting for page to stabilize...")
             time.sleep(2)
             try:
                 self.page.wait_for_load_state('load', timeout=10000)
@@ -73,6 +74,7 @@ class ProductSearch:
             self._random_delay()
             
             # Wait for search results to load - try multiple selectors
+            logger.info("🔍 Looking for search results...")
             result_selectors = [
                 '[data-component-type="s-search-result"]',
                 '[data-index]',  # Alternative selector for search results
@@ -84,7 +86,7 @@ class ProductSearch:
             for selector in result_selectors:
                 try:
                     self.page.wait_for_selector(selector, timeout=10000)
-                    logger.info(f"Search results found using selector: {selector}")
+                    logger.success(f"✅ Search results found using selector: {selector}")
                     results_found = True
                     break
                 except PlaywrightTimeoutError:
@@ -95,17 +97,23 @@ class ProductSearch:
                 # Take a screenshot for debugging
                 screenshot_path = Path(__file__).parent.parent / "search_page_screenshot.png"
                 self.page.screenshot(path=str(screenshot_path))
-                logger.warning(f"No search results found. Screenshot saved to {screenshot_path}")
-                logger.warning(f"Current URL: {self.page.url}")
-                logger.warning(f"Page title: {self.page.title()}")
+                logger.warning("⚠️ No search results found")
+                logger.file_operation("saved", str(screenshot_path), "Debug screenshot")
+                logger.browser_action("Current page info", f"URL: {self.page.url}, Title: {self.page.title()}")
+                logger.error_with_solution(
+                    "No search results found",
+                    "Try a different keyword or check if Amazon is accessible"
+                )
                 return []
             
             # Wait a bit more for results to render
+            logger.info("⏳ Waiting for results to render...")
             time.sleep(2)
             
             products = []
             
             # Find all search result items - try multiple selectors
+            logger.info("🔍 Extracting search result items...")
             result_items = []
             result_selectors_try = [
                 '[data-component-type="s-search-result"]',
@@ -123,21 +131,26 @@ class ProductSearch:
                     items = self.page.locator(selector).all()
                     if items and len(items) > 0:
                         result_items = items
-                        logger.info(f"Found {len(result_items)} search results using selector: {selector}")
+                        logger.success(f"✅ Found {len(result_items)} search results using selector: {selector}")
                         break
                 except Exception as e:
                     logger.debug(f"Failed to find results with selector {selector}: {e}")
                     continue
             
             if not result_items:
-                logger.warning("No search result items found")
+                logger.warning("⚠️ No search result items found")
                 # Take screenshot for debugging
                 screenshot_path = Path(__file__).parent.parent / "search_results_screenshot.png"
                 self.page.screenshot(path=str(screenshot_path))
-                logger.warning(f"Screenshot saved to {screenshot_path}")
+                logger.file_operation("saved", str(screenshot_path), "Debug screenshot")
+                logger.error_with_solution(
+                    "No search result items found",
+                    "Amazon may have changed their page structure or blocked the request"
+                )
                 return []
             
             # Iterate through all results to find first top_n non-sponsored products
+            logger.info(f"🔄 Processing {len(result_items)} search results to find {top_n} products...")
             product_count = 0
             sponsored_count = 0
             no_href_count = 0
@@ -146,6 +159,10 @@ class ProductSearch:
                 # Stop if we have enough non-sponsored products
                 if len(products) >= top_n:
                     break
+                
+                # Show progress every 5 items
+                if i % 5 == 0 or i == len(result_items):
+                    logger.progress(i, len(result_items), f"Found {len(products)} products so far")
                 
                 try:
                     # Check if this item is sponsored and skip if so
@@ -276,16 +293,32 @@ class ProductSearch:
                     logger.error(f"Error extracting product {i}: {e}", exc_info=True)
                     continue
             
-            logger.info(f"Extraction summary: {sponsored_count} sponsored, {no_href_count} no href, {len(products)} products extracted")
+            # Final summary
+            logger.data_summary("Search results processed", len(result_items), 
+                              f"{sponsored_count} sponsored, {no_href_count} no href, {len(products)} products extracted")
             
-            logger.info(f"Successfully extracted {len(products)} products")
+            if len(products) > 0:
+                logger.success(f"✅ Successfully extracted {len(products)} products")
+                for i, product in enumerate(products, 1):
+                    logger.info(f"   {i}. {product['title'][:50]}... (ASIN: {product['asin']})")
+            else:
+                logger.warning("⚠️ No products extracted from search results")
+                
             return products
             
         except PlaywrightTimeoutError:
-            logger.error("Timeout waiting for search results")
+            logger.error("⏰ Timeout waiting for search results")
+            logger.error_with_solution(
+                "Search timed out",
+                "Try again with a different keyword or check your internet connection"
+            )
             return []
         except Exception as e:
-            logger.error(f"Error during product search: {e}")
+            logger.error(f"💥 Error during product search: {e}", exc_info=True)
+            logger.error_with_solution(
+                "Product search failed",
+                "Check your internet connection and try again"
+            )
             return []
     
     def _is_sponsored(self, item) -> bool:
