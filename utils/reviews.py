@@ -104,10 +104,10 @@ class ReviewScraper:
             logger.browser_action("Navigating to reviews page", reviews_url)
             self.page.goto(reviews_url, wait_until='domcontentloaded', timeout=PAGE_LOAD_TIMEOUT)
             
-            # Quick wait for initial page load
+            # Quick wait for initial page load - reduced timeout
             logger.info("⏳ Waiting for page to load...")
             try:
-                self.page.wait_for_load_state('load', timeout=10000)
+                self.page.wait_for_load_state('load', timeout=5000)  # Reduced from 10000
             except:
                 pass
             
@@ -129,10 +129,10 @@ class ReviewScraper:
                     'reviews': []
                 }
             
-            # Wait for reviews container - use most reliable selector
+            # Wait for reviews container - use most reliable selector with reduced timeout
             logger.info("🔍 Looking for review elements...")
             try:
-                self.page.wait_for_selector('[data-hook="review"]', timeout=10000, state='visible')
+                self.page.wait_for_selector('[data-hook="review"]', timeout=5000, state='visible')  # Reduced from 10000
                 logger.success("✅ Review elements found")
             except PlaywrightTimeoutError:
                 # Check if there are truly no reviews
@@ -203,10 +203,10 @@ class ReviewScraper:
         reviews = []
         
         try:
-            # Quick scroll to trigger lazy loading (single scroll, no multiple passes)
+            # Quick scroll to trigger lazy loading (single scroll, no multiple passes) - reduced wait
             try:
                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(0.5)
+                time.sleep(0.2)  # Reduced from 0.5s
                 self.page.evaluate("window.scrollTo(0, 0)")
             except:
                 pass
@@ -389,7 +389,7 @@ class ReviewScraper:
                         expand_btn = review_element.locator('[data-hook="expand-review"]').first
                         if expand_btn.count() > 0 and expand_btn.is_visible():
                             expand_btn.click()
-                            time.sleep(0.1)
+                            time.sleep(0.05)  # Reduced from 0.1s
                     except:
                         pass
                     
@@ -454,14 +454,14 @@ class ReviewScraper:
                 logger.debug("Clicking next page button...")
                 next_button.click()
                 
-                # Wait for new page to load
-                time.sleep(2)  # Give page time to start loading
+                # Wait for new page to load - reduced wait times
+                time.sleep(1)  # Reduced from 2s
                 try:
                     # Wait for reviews to load on new page
-                    self.page.wait_for_selector('[data-hook="review"]', timeout=10000, state='visible')
+                    self.page.wait_for_selector('[data-hook="review"]', timeout=5000, state='visible')  # Reduced timeout
                 except:
                     # Still wait a bit more if selector timeout
-                    time.sleep(2)
+                    time.sleep(1)  # Reduced from 2s
                 
                 # Verify we're on a new page by checking URL changed or reviews reloaded
                 review_count = self.page.locator('[data-hook="review"]').count()

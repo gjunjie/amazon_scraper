@@ -63,11 +63,11 @@ class ProductSearch:
             # Use 'domcontentloaded' instead of 'networkidle' - more reliable
             self.page.goto(search_url, wait_until='domcontentloaded', timeout=PAGE_LOAD_TIMEOUT)
             
-            # Wait a bit for page to stabilize
+            # Quick wait for page to stabilize - reduced from 2s to 0.5s
             logger.info("⏳ Waiting for page to stabilize...")
-            time.sleep(2)
+            time.sleep(0.5)
             try:
-                self.page.wait_for_load_state('load', timeout=10000)
+                self.page.wait_for_load_state('load', timeout=5000)  # Reduced timeout
             except Exception:
                 pass  # Continue even if load state times out
             
@@ -106,9 +106,9 @@ class ProductSearch:
                 )
                 return []
             
-            # Wait a bit more for results to render
+            # Quick wait for results to render - reduced from 2s to 0.5s
             logger.info("⏳ Waiting for results to render...")
-            time.sleep(2)
+            time.sleep(0.5)
             
             products = []
             

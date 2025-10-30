@@ -13,10 +13,10 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # Cookies file
 COOKIES_FILE = BASE_DIR / "cookies.json"
 
-# Rate limiting settings
-MIN_DELAY = 2  # Minimum delay between requests (seconds)
-MAX_DELAY = 5  # Maximum delay between requests (seconds)
-PAGE_LOAD_TIMEOUT = 30000  # Page load timeout in milliseconds
+# Rate limiting settings - Optimized for speed while avoiding detection
+MIN_DELAY = 0.5  # Minimum delay between requests (seconds) - reduced from 2
+MAX_DELAY = 1.5  # Maximum delay between requests (seconds) - reduced from 5
+PAGE_LOAD_TIMEOUT = 15000  # Page load timeout in milliseconds - reduced from 30000
 
 # User agent
 USER_AGENT = (
@@ -30,5 +30,16 @@ AMAZON_BASE_URL = "https://www.amazon.com"
 
 # Retry settings
 MAX_RETRIES = 3
-RETRY_DELAY = 5  # seconds
+RETRY_DELAY = 2  # seconds - reduced from 5
+
+# Performance settings
+ENABLE_CACHING = True  # Enable intelligent caching
+CACHE_DURATION_HOURS = 24  # How long to keep cached data
+DEFAULT_PARALLEL_WORKERS = 3  # Default number of parallel workers
+MAX_PARALLEL_WORKERS = 10  # Maximum allowed parallel workers
+
+# Browser optimization settings
+DISABLE_IMAGES = True  # Don't load images for faster scraping
+DISABLE_JAVASCRIPT = False  # Keep JS enabled for dynamic content
+AGGRESSIVE_CACHE_DISCARD = True  # More aggressive memory management
 
